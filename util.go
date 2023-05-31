@@ -1,0 +1,42 @@
+package progress
+
+import (
+	"bytes"
+	"fmt"
+	"io"
+
+	"github.com/tonistiigi/vt100"
+)
+
+func renderTerm(term *vt100.VT100, w io.Writer) {
+	h := term.UsedHeight()
+	buf := &bytes.Buffer{}
+	for _, line := range term.Content[:h] {
+		for _, cell := range line {
+			buf.WriteRune(cell)
+		}
+		buf.WriteRune('\n')
+	}
+	_, _ = w.Write(buf.Bytes()) // explicitly ignore any errors
+}
+
+func align(l, r string, w int) string {
+	return fmt.Sprintf("%-[2]*[1]s %[3]s", l, w-len(r)-1, r)
+}
+
+func arrow(len int) string {
+	arrow := ""
+	for i := 0; i < len; i++ {
+		arrow += "="
+	}
+	arrow += ">"
+	return arrow
+}
+
+func merge(bufs [][]byte) []byte {
+	var buf bytes.Buffer
+	for _, line := range bufs {
+		buf.Write(line)
+	}
+	return buf.Bytes()
+}
