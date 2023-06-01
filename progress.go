@@ -14,7 +14,10 @@ type progressRenderer interface {
 	render(w io.Writer, width int, showError bool)
 }
 
-// Processes events from a channel and renders them to the console or trace.
+// Processes events from a channel and renders them to the console or trace. The
+// mode can be "auto", "tty" or "plain". In "auto" mode, the console is used if
+// available. In "tty" mode, the console is used and an error is returned if it
+// is not available. In "plain" mode, the trace is used.
 // When the events channel is closed, the last state is rendered and the
 // function returns. The returned channel is closed when the rendering is
 // complete.
@@ -84,7 +87,9 @@ func (r *RootTask) Close() error {
 	return nil
 }
 
-// DisplayProgress displays progress events to the console or trace.
+// DisplayProgress displays progress events to the console or trace. It is
+// a convenience function that creates a RootTask and returns a channel that
+// is closed when the rendering is complete.
 func DisplayProgress(f console.File, name, mode string) (*RootTask, <-chan struct{}, error) {
 	events := make(chan *TaskEvent)
 
