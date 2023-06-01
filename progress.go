@@ -1,25 +1,40 @@
 package progress
 
 import (
-	"bytes"
 	"fmt"
 	"io"
-	"strings"
 	"time"
 
 	"github.com/containerd/console"
-	"github.com/morikuni/aec"
-	"github.com/tonistiigi/units"
-	"github.com/tonistiigi/vt100"
 	"golang.org/x/time/rate"
 )
 
-// processes events from a channel and renders them to the console
-func MainLoop(c console.Console, name string, events <-chan *TaskEvent) {
-	p := &progress{
-		name:      name,
-		startTime: time.Now(),
-		allTasks:  make(map[uint64]*task),
+type progressRenderer interface {
+	update(te *TaskEvent)
+	render(w io.Writer, width int, showError bool)
+}
+
+// Processes events from a channel and renders them to the console or trace.
+// When the events channel is closed, the last state is rendered and the
+// function returns. The returned channel is closed when the rendering is
+// complete.
+func ProcessEvents(f console.File, name, mode string, events <-chan *TaskEvent) (<-chan struct{}, error) {
+
+	var renderer progressRenderer = newTraceRenderer(name)
+	var cons console.Console = noopConsole{}
+
+	switch mode {
+	case "auto", "tty":
+		if c, err := console.ConsoleFromFile(f); err == nil {
+			cons = c
+			renderer = newConsoleRenderer(name)
+		} else if mode == "tty" {
+			return nil, fmt.Errorf("failed to open console: %s", err)
+		}
+
+	case "plain":
+	default:
+		return nil, fmt.Errorf("unknown mode %q", mode)
 	}
 
 	tickRate := 150 * time.Millisecond
@@ -27,217 +42,62 @@ func MainLoop(c console.Console, name string, events <-chan *TaskEvent) {
 
 	t := time.NewTicker(tickRate)
 	r := rate.NewLimiter(rate.Every(rateLimit), 1)
+	doneChan := make(chan struct{})
 
-	for done := false; !done; {
-		select {
-		case <-t.C:
-		case e, ok := <-events:
-			if !ok {
-				done = true
-			} else {
-				updateProgress(p, e)
+	go func() {
+		for done := false; !done; {
+			select {
+			case <-t.C:
+			case e, ok := <-events:
+				if !ok {
+					done = true
+				} else {
+					renderer.update(e)
+				}
+			}
+
+			if done || r.Allow() {
+				size, err := cons.Size()
+				if err != nil {
+					size = console.WinSize{Width: 80}
+				}
+
+				renderer.render(f, int(size.Width), done)
+				t.Stop()
+				t = time.NewTicker(tickRate)
 			}
 		}
+		close(doneChan)
+	}()
 
-		if done || r.Allow() {
-			size, err := c.Size()
-			if err != nil {
-				size = console.WinSize{Width: 80}
-			}
-			p.render(c, int(size.Width), done)
-			t.Stop()
-			t = time.NewTicker(tickRate)
-		}
-	}
+	return doneChan, nil
 }
 
-// TaskEvent carries all the information about tasks
-type TaskEvent struct {
-	ID       uint64 // unique ID for the task, must be > 0
-	ParentID uint64 // ID of the parent task, 0 if no parent
-
-	Name string // name of the task, this will be displayed in the header line
-
-	StartTime, EndTime time.Time // start and end time of the task, used to calculate the duration
-	IsDone             bool      // true if the task is done, finished tasks will be displayed differently
-
-	// Current and Total are used to display a copy progress if Total is
-	// unknown leave it as 0 and only Current will be displayed
-	Current, Total uint64
-
-	HasErr bool  // true if the task has an error
-	Err    error // error of the task, will be displayed in the task body when all tasks are done
-
-	Logs []byte // logs of the task, will be displayed in the task body
+// RootTask is a task that can be used to close the channel of events.
+type RootTask struct {
+	TaskExecutor
 }
 
-func updateProgress(p *progress, te *TaskEvent) {
-	if existingTask, ok := p.allTasks[te.ID]; ok {
-		existingTask.update(te)
-	} else {
-		parent, hasParent := p.allTasks[te.ParentID]
-
-		depth := 1
-		if hasParent {
-			depth = parent.depth + 1
-		}
-
-		newTask := &task{
-			id:        te.ID,
-			parentID:  te.ParentID,
-			startTime: te.StartTime,
-			current:   te.Current,
-			total:     te.Total,
-			name:      te.Name,
-			depth:     depth,
-			term:      vt100.NewVT100(6, 80),
-			progress:  p,
-		}
-
-		p.allTasks[te.ID] = newTask
-		if hasParent {
-			parent.subtasks = append(parent.subtasks, newTask)
-		} else {
-			p.tasks = append(p.tasks, newTask)
-		}
-	}
+// Close closes the channel of events.
+func (r *RootTask) Close() error {
+	close(r.ch)
+	return nil
 }
 
-type progress struct {
-	name      string
-	startTime time.Time
-	tasks     []*task
-	allTasks  map[uint64]*task
-	tasksDone int
-	lines     int
-}
+// DisplayProgress displays progress events to the console or trace.
+func DisplayProgress(f console.File, name, mode string) (*RootTask, <-chan struct{}, error) {
+	events := make(chan *TaskEvent)
 
-func (p *progress) render(w io.Writer, width int, showError bool) {
-	fmt.Fprint(w, aec.Up(uint(p.lines)))
-
-	left := fmt.Sprintf("+ %s", p.name)
-	right := fmt.Sprintf("(%d/%d) %3.1fs", p.tasksDone, len(p.tasks), time.Since(p.startTime).Seconds())
-	titleLine := align(left, right, width)
-
-	fmt.Fprintln(w, titleLine)
-	lineCnt := 1
-	for _, task := range p.tasks {
-		lineCnt += task.render(w, width, showError)
+	done, err := ProcessEvents(f, name, mode, events)
+	if err != nil {
+		return nil, nil, err
 	}
 
-	if diff := p.lines - lineCnt; diff > 0 {
-		for i := 0; i < diff; i++ {
-			fmt.Fprintln(w, strings.Repeat(" ", width))
-		}
-		fmt.Fprint(w, aec.Up(uint(diff)))
-	}
-	p.lines = lineCnt
-}
-
-type task struct {
-	id                 uint64
-	parentID           uint64
-	name               string
-	depth              int
-	startTime, endTime time.Time
-	current, total     uint64
-	isDone             bool
-	hasError           bool
-	err                error
-	logs               [][]byte
-	term               *vt100.VT100
-	subtasks           []*task
-	subtasksDone       int
-	progress           *progress
-}
-
-func (t *task) update(te *TaskEvent) {
-	if te.Name != "" {
-		t.name = te.Name
-	}
-	t.endTime = te.EndTime
-	if te.Current > 0 {
-		t.current = te.Current
-	}
-	if te.Total > 0 {
-		t.total = te.Total
-	}
-	if !t.isDone && te.IsDone {
-		t.isDone = true
-		if parent, ok := t.progress.allTasks[t.parentID]; ok {
-			parent.subtasksDone++
-		} else {
-			t.progress.tasksDone++
-		}
+	r := &RootTask{
+		TaskExecutor{
+			ch: events,
+		},
 	}
 
-	if te.HasErr {
-		t.hasError = true
-		t.err = te.Err
-	}
-
-	if len(te.Logs) > 0 {
-		t.logs = append(t.logs, te.Logs)
-	}
-}
-
-func (t *task) render(w io.Writer, width int, showError bool) int {
-	left := fmt.Sprintf("%s %s", arrow(t.depth), t.name)
-
-	if t.total > 0 {
-		left = fmt.Sprintf("%s %.2f / %.2f", left, units.Bytes(t.current), units.Bytes(t.total))
-	} else if t.current > 0 {
-		left = fmt.Sprintf("%s %.2f", left, units.Bytes(t.current))
-	}
-
-	if t.hasError {
-		left += " [ERROR]"
-	}
-
-	right := ""
-	if len(t.subtasks) > 0 {
-		right = fmt.Sprintf("(%d/%d)", t.subtasksDone, len(t.subtasks))
-	}
-
-	endTime := time.Now()
-	if t.isDone {
-		endTime = t.endTime
-	}
-	right = fmt.Sprintf("%s %3.1fs", right, endTime.Sub(t.startTime).Seconds())
-
-	titleLine := align(left, right, width)
-	if t.hasError {
-		titleLine = aec.Apply(titleLine, aec.RedF, aec.Bold)
-	} else if t.isDone {
-		titleLine = aec.Apply(titleLine, aec.BlueF)
-	}
-
-	fmt.Fprintln(w, titleLine)
-	lines := 1
-
-	if !t.isDone {
-		t.term.Resize(6, width)
-		_, _ = t.term.Write(merge(t.logs))
-		t.logs = nil
-
-		buf := &bytes.Buffer{}
-		renderTerm(t.term, buf)
-		fmt.Fprint(w, aec.Apply(buf.String(), aec.Faint))
-		lines += t.term.UsedHeight()
-	}
-
-	if showError && t.hasError {
-		t.term = vt100.NewVT100(6, width)
-		fmt.Fprintln(t.term, t.err)
-		buf := &bytes.Buffer{}
-		renderTerm(t.term, buf)
-		fmt.Fprint(w, aec.Apply(buf.String(), aec.RedF))
-		lines += t.term.UsedHeight()
-	}
-
-	for _, subtask := range t.subtasks {
-		lines += subtask.render(w, width, showError)
-	}
-
-	return lines
+	return r, done, nil
 }

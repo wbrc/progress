@@ -9,30 +9,26 @@ import (
 	"time"
 
 	"github.com/wbrc/progress"
-
-	"github.com/containerd/console"
 )
 
 func main() {
 
-	con, err := console.ConsoleFromFile(os.Stdout)
+	p, done, err := progress.DisplayProgress(os.Stdout, "build stuff", "auto")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to open console: %v\n", err)
+		fmt.Fprintf(os.Stderr, "failed to display progress: %v\n", err)
 		os.Exit(1)
 	}
 
-	ch := make(chan *progress.TaskEvent)
-
 	errChan := make(chan error)
 	go func() {
-		err := Work(ch)
+		err := Work(p)
 		if err != nil {
 			errChan <- err
 		}
 		close(errChan)
 	}()
 
-	progress.MainLoop(con, "build stuff", ch)
+	<-done
 
 	if err := <-errChan; err != nil {
 		fmt.Fprintf(os.Stderr, "failed to build: %v\n", err)
@@ -40,10 +36,8 @@ func main() {
 	}
 }
 
-func Work(ch chan *progress.TaskEvent) (buildError error) {
-	defer close(ch)
-
-	p := progress.New(ch)
+func Work(p *progress.RootTask) (buildError error) {
+	defer p.Close()
 
 	err := p.Execute("fetch image", func(t *progress.Task) error {
 		errs := make(chan error)
@@ -86,8 +80,8 @@ func Work(ch chan *progress.TaskEvent) (buildError error) {
 	}()
 
 	err = p.Execute("build image", func(t *progress.Task) error {
-		for i := 0; i < 20; i++ {
-			time.Sleep(time.Duration(rand.Intn(50))*time.Millisecond + 50*time.Millisecond)
+		for i := 0; i < 200; i++ {
+			time.Sleep(time.Duration(rand.Intn(10))*time.Millisecond + 5*time.Millisecond)
 			fmt.Fprintf(t, "some line %d\n", i)
 		}
 
