@@ -42,7 +42,7 @@ func (t *TaskExecutor) Execute(name string, f func(*Task) error) error {
 		StartTime: time.Now(),
 	}
 
-	err := f(&Task{TaskExecutor{newID, t.ch}})
+	err := f(&Task{TaskExecutor{newID, t.ch}, &taskLogger{t.ch, newID}})
 
 	t.ch <- &TaskEvent{
 		ID:      newID,
@@ -153,14 +153,20 @@ func (t *TaskExecutor) Writer(name string, w io.Writer, total uint64, f func(*Wr
 // Task is a task or subtask that can be used to write logs.
 type Task struct {
 	TaskExecutor
+	Log *taskLogger
+}
+
+type taskLogger struct {
+	ch chan *TaskEvent
+	id uint64
 }
 
 // Write writes logs to the task.
-func (t *Task) Write(p []byte) (int, error) {
+func (l *taskLogger) Write(p []byte) (int, error) {
 	pp := make([]byte, len(p))
 	copy(pp, p)
-	t.ch <- &TaskEvent{
-		ID:   t.id,
+	l.ch <- &TaskEvent{
+		ID:   l.id,
 		Logs: pp,
 	}
 	return len(p), nil

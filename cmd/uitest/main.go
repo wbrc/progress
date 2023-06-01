@@ -89,7 +89,7 @@ func Work(p *progress.RootTask) (buildError error) {
 	err = p.Execute("build image", func(t *progress.Task) error {
 		for i := 0; i < 10; i++ {
 			time.Sleep(time.Duration(rand.Intn(100))*time.Millisecond + 50*time.Millisecond)
-			fmt.Fprintf(t, "some line %d\n", i)
+			fmt.Fprintf(t.Log, "some line %d\n", i)
 		}
 
 		err := t.Execute("build subimage", func(t *progress.Task) error {
@@ -114,6 +114,18 @@ func Work(p *progress.RootTask) (buildError error) {
 	})
 	if err != nil {
 		return fmt.Errorf("failed to build image: %w", err)
+	}
+
+	err = p.Writer("push image", io.Discard, 0, func(t *progress.WriterTask) error {
+		_, err := io.Copy(t, io.LimitReader(rand.New(rand.NewSource(0)), 100000000))
+		if err != nil {
+			return fmt.Errorf("failed to write: %w", err)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("failed to push image: %w", err)
 	}
 
 	return nil

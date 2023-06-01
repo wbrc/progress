@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/tonistiigi/vt100"
 )
@@ -25,12 +26,7 @@ func align(l, r string, w int) string {
 }
 
 func arrow(len int) string {
-	arrow := ""
-	for i := 0; i < len; i++ {
-		arrow += "="
-	}
-	arrow += ">"
-	return arrow
+	return strings.TrimSuffix(strings.Repeat("=> ", len), " ")
 }
 
 func merge(bufs [][]byte) []byte {
