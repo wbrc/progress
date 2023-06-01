@@ -203,7 +203,7 @@ func (t *task) render(w io.Writer, width int, showError bool) int {
 }
 
 func (t *task) renderLogs(w io.Writer) {
-	if t.logTail.Len() > 0 {
+	if t.logTail.Len() > 0 && t.hasError {
 		logBuf := &bytes.Buffer{}
 		header := fmt.Sprintf("=== LOG DUMP %s ===", t.name)
 		fmt.Fprintln(logBuf, header)

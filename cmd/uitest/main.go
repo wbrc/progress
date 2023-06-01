@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"math/rand"
@@ -11,7 +12,14 @@ import (
 	"github.com/wbrc/progress"
 )
 
+var failWithErr = false
+
+func init() {
+	flag.BoolVar(&failWithErr, "fail", false, "fail with error")
+}
+
 func main() {
+	flag.Parse()
 
 	p, done, err := progress.DisplayProgress(os.Stdout, "build stuff", "auto")
 	if err != nil {
@@ -31,7 +39,6 @@ func main() {
 	<-done
 
 	if err := <-errChan; err != nil {
-		fmt.Fprintf(os.Stderr, "failed to build: %v\n", err)
 		os.Exit(1)
 	}
 }
@@ -50,11 +57,7 @@ func Work(p *progress.RootTask) (buildError error) {
 						return fmt.Errorf("failed to read: %w", err)
 					}
 
-					if rand.New(rand.NewSource(time.Now().UnixNano())).Intn(4) != 0 {
-						return nil
-					} else {
-						return errors.New("some error")
-					}
+					return nil
 				})
 			}(i)
 		}
@@ -71,6 +74,10 @@ func Work(p *progress.RootTask) (buildError error) {
 	}
 
 	defer func() {
+		if buildError == nil {
+			return
+		}
+
 		if err := p.Execute("cleanup", func(t *progress.Task) error {
 			time.Sleep(2 * time.Second)
 			return nil
@@ -80,15 +87,18 @@ func Work(p *progress.RootTask) (buildError error) {
 	}()
 
 	err = p.Execute("build image", func(t *progress.Task) error {
-		for i := 0; i < 200; i++ {
-			time.Sleep(time.Duration(rand.Intn(10))*time.Millisecond + 5*time.Millisecond)
+		for i := 0; i < 10; i++ {
+			time.Sleep(time.Duration(rand.Intn(100))*time.Millisecond + 50*time.Millisecond)
 			fmt.Fprintf(t, "some line %d\n", i)
 		}
 
 		err := t.Execute("build subimage", func(t *progress.Task) error {
 			err := t.Execute("build subsubimage", func(t *progress.Task) error {
 				time.Sleep(2 * time.Second)
-				return errors.New("some err")
+				if failWithErr {
+					return errors.New("some err")
+				}
+				return nil
 			})
 			if err != nil {
 				return fmt.Errorf("failed to build subsubimage: %w", err)
