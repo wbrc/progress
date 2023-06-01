@@ -14,6 +14,7 @@ import (
 	"golang.org/x/time/rate"
 )
 
+// processes events from a channel and renders them to the console
 func MainLoop(c console.Console, name string, events <-chan *TaskEvent) {
 	p := &progress{
 		name:      name,
@@ -50,21 +51,24 @@ func MainLoop(c console.Console, name string, events <-chan *TaskEvent) {
 	}
 }
 
+// TaskEvent carries all the information about tasks
 type TaskEvent struct {
-	ID       uint64
-	ParentID uint64
+	ID       uint64 // unique ID for the task, must be > 0
+	ParentID uint64 // ID of the parent task, 0 if no parent
 
-	Name string
+	Name string // name of the task, this will be displayed in the header line
 
-	StartTime, EndTime time.Time
-	IsDone             bool
+	StartTime, EndTime time.Time // start and end time of the task, used to calculate the duration
+	IsDone             bool      // true if the task is done, finished tasks will be displayed differently
 
+	// Current and Total are used to display a copy progress if Total is
+	// unknown leave it as 0 and only Current will be displayed
 	Current, Total uint64
 
-	HasErr bool
-	Err    error
+	HasErr bool  // true if the task has an error
+	Err    error // error of the task, will be displayed in the task body when all tasks are done
 
-	Logs []byte
+	Logs []byte // logs of the task, will be displayed in the task body
 }
 
 func updateProgress(p *progress, te *TaskEvent) {
