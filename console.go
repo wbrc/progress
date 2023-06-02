@@ -20,6 +20,7 @@ type consoleRenderer struct {
 	allTasks  map[uint64]*task
 	tasksDone int
 	lines     int
+	hasError  bool
 }
 
 func (p *consoleRenderer) update(te *TaskEvent) {
@@ -61,6 +62,14 @@ func (p *consoleRenderer) render(w io.Writer, width int, showError bool) {
 	left := fmt.Sprintf("+ %s", p.name)
 	right := fmt.Sprintf("(%d/%d) %.1fs", p.tasksDone, len(p.tasks), time.Since(p.startTime).Seconds())
 	titleLine := align(left, right, width)
+
+	if showError {
+		if p.hasError {
+			titleLine = aec.Apply(titleLine, aec.RedF, aec.Bold)
+		} else {
+			titleLine = aec.Apply(titleLine, aec.BlueF)
+		}
+	}
 
 	fmt.Fprintln(w, titleLine)
 	lineCnt := 1
@@ -132,6 +141,7 @@ func (t *task) update(te *TaskEvent) {
 	if te.HasErr {
 		t.hasError = true
 		t.err = te.Err
+		t.progress.hasError = true
 	}
 
 	if len(te.Logs) > 0 {
@@ -142,14 +152,15 @@ func (t *task) update(te *TaskEvent) {
 func (t *task) render(w io.Writer, width int, showError bool) int {
 	left := fmt.Sprintf("%s %s", arrow(t.depth), t.name)
 
-	if t.total > 0 {
-		left = fmt.Sprintf("%s %.2f / %.2f", left, units.Bytes(t.current), units.Bytes(t.total))
-	} else if t.current > 0 {
-		left = fmt.Sprintf("%s %.2f", left, units.Bytes(t.current))
-	}
+	if t.current > 0 {
+		current := fmt.Sprintf(" %.1f", units.Bytes(t.current))
 
-	if t.hasError {
-		left += " [ERROR]"
+		var total string
+		if t.total > 0 && !t.isDone {
+			total = fmt.Sprintf(" / %.1f", units.Bytes(t.total))
+		}
+
+		left = fmt.Sprintf("%s%s%s", left, current, total)
 	}
 
 	right := ""

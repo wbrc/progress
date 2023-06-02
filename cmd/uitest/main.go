@@ -64,7 +64,7 @@ func Work(p *progress.RootTask) (buildError error) {
 						size /= 2
 					}
 
-					lr := rateReader(io.LimitReader(rt, int64(size)), 1e7)
+					lr := rateReader(io.LimitReader(rt, int64(size)), rand.Intn(5300121)+5300121)
 					_, err := io.Copy(io.Discard, lr)
 					if err != nil {
 						return fmt.Errorf("failed to read: %w", err)
