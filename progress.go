@@ -21,6 +21,7 @@ type progressRenderer interface {
 // When the events channel is closed, the last state is rendered and the
 // function returns. The returned channel is closed when the rendering is
 // complete.
+// You'll most likely want to use [DisplayProgress] instead of this function.
 func ProcessEvents(f console.File, name, mode string, events <-chan *TaskEvent) (<-chan struct{}, error) {
 
 	var renderer progressRenderer = newTraceRenderer(name)

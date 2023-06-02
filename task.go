@@ -153,7 +153,7 @@ func (t *TaskExecutor) Writer(name string, w io.Writer, total uint64, f func(*Wr
 // Task is a task or subtask that can be used to write logs.
 type Task struct {
 	TaskExecutor
-	Log *taskLogger
+	Log *taskLogger // Log implements io.Writer and can be used to write logs
 }
 
 type taskLogger struct {
