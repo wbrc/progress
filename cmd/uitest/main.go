@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -10,12 +11,17 @@ import (
 	"time"
 
 	"github.com/wbrc/progress"
+	"golang.org/x/time/rate"
 )
 
-var failWithErr = false
+var (
+	failWithErr   = false
+	failDownload2 = false
+)
 
 func init() {
 	flag.BoolVar(&failWithErr, "fail", false, "fail with error")
+	flag.BoolVar(&failDownload2, "faildl", false, "fail download step with error")
 }
 
 func main() {
@@ -51,10 +57,21 @@ func Work(p *progress.RootTask) (buildError error) {
 
 		for i := 0; i < 3; i++ {
 			go func(idx int) {
-				errs <- t.Reader(fmt.Sprintf("fetching %d", idx), rand.New(rand.NewSource(0)), 100000000, func(rt *progress.ReaderTask) error {
-					_, err := io.Copy(io.Discard, io.LimitReader(rt, 100000000))
+				size := uint64(rand.Intn(10000000) + 10000000)
+				errs <- t.Reader(fmt.Sprintf("fetching %d", idx), rand.New(rand.NewSource(0)), size, func(rt *progress.ReaderTask) error {
+
+					if failDownload2 && idx == 1 {
+						size /= 2
+					}
+
+					lr := rateReader(io.LimitReader(rt, int64(size)), 1e7)
+					_, err := io.Copy(io.Discard, lr)
 					if err != nil {
 						return fmt.Errorf("failed to read: %w", err)
+					}
+
+					if failDownload2 && idx == 1 {
+						return errors.New("download err")
 					}
 
 					return nil
@@ -67,7 +84,11 @@ func Work(p *progress.RootTask) (buildError error) {
 			allErrs = errors.Join(allErrs, <-errs)
 		}
 
-		return allErrs
+		if allErrs != nil {
+			return fmt.Errorf("failed to fetch image: %w", allErrs)
+		}
+
+		return nil
 	})
 	if err != nil {
 		return fmt.Errorf("failed to fetch image: %w", err)
@@ -93,8 +114,9 @@ func Work(p *progress.RootTask) (buildError error) {
 		}
 
 		err := t.Execute("build subimage", func(t *progress.Task) error {
+			time.Sleep(time.Duration(rand.Intn(1000))*time.Millisecond + 500*time.Millisecond)
 			err := t.Execute("build subsubimage", func(t *progress.Task) error {
-				time.Sleep(2 * time.Second)
+				time.Sleep(time.Duration(rand.Intn(1000))*time.Millisecond + 500*time.Millisecond)
 				if failWithErr {
 					return errors.New("some err")
 				}
@@ -103,6 +125,7 @@ func Work(p *progress.RootTask) (buildError error) {
 			if err != nil {
 				return fmt.Errorf("failed to build subsubimage: %w", err)
 			}
+			time.Sleep(time.Duration(rand.Intn(1000))*time.Millisecond + 500*time.Millisecond)
 
 			return nil
 		})
@@ -117,7 +140,9 @@ func Work(p *progress.RootTask) (buildError error) {
 	}
 
 	err = p.Writer("push image", io.Discard, 0, func(t *progress.WriterTask) error {
-		_, err := io.Copy(t, io.LimitReader(rand.New(rand.NewSource(0)), 100000000))
+		size := int64(rand.Intn(10000000) + 10000000)
+		rr := rateReader(io.LimitReader(rand.New(rand.NewSource(0)), size), 2e7)
+		_, err := io.Copy(t, rr)
 		if err != nil {
 			return fmt.Errorf("failed to write: %w", err)
 		}
@@ -129,4 +154,31 @@ func Work(p *progress.RootTask) (buildError error) {
 	}
 
 	return nil
+}
+
+func rateReader(r io.Reader, maxRate int) io.Reader {
+	rr := &rateR{
+		r: r,
+		l: rate.NewLimiter(rate.Limit(maxRate), 1000*1000*1000),
+	}
+	rr.l.AllowN(time.Now(), 1000*1000*1000)
+	return rr
+}
+
+type rateR struct {
+	r io.Reader
+	l *rate.Limiter
+}
+
+func (l *rateR) Read(p []byte) (int, error) {
+	n, err := l.r.Read(p)
+	if err != nil {
+		return n, err
+	}
+
+	if err := l.l.WaitN(context.Background(), n); err != nil {
+		return n, err
+	}
+
+	return n, nil
 }
