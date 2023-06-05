@@ -12,13 +12,14 @@ import (
 type knownTask struct {
 	started time.Time
 	name    string
+	cached  bool
 }
 
 type traceRenderer struct {
 	name      string
 	startTime time.Time
 
-	knownTasks map[uint64]knownTask
+	knownTasks map[uint64]*knownTask
 
 	buf *bytes.Buffer
 }
@@ -32,13 +33,16 @@ func (t *traceRenderer) update(te *TaskEvent) {
 	header := fmt.Sprintf("[%5s]", secs)
 
 	if task, ok := t.knownTasks[te.ID]; !ok {
-		t.knownTasks[te.ID] = knownTask{
+		t.knownTasks[te.ID] = &knownTask{
 			started: te.StartTime,
 			name:    te.Name,
+			cached:  te.Cached,
 		}
 
 		fmt.Fprintf(t.buf, "%s START %q\n", header, te.Name)
 	} else {
+		task.cached = task.cached || te.Cached
+
 		if len(te.Logs) > 0 {
 			logs, _ := bytes.CutSuffix(te.Logs, []byte("\n"))
 			for _, line := range bytes.Split(logs, []byte("\n")) {
@@ -63,7 +67,12 @@ func (t *traceRenderer) update(te *TaskEvent) {
 				errStr = fmt.Sprintf(" with ERR %s", te.Err)
 			}
 
-			fmt.Fprintf(t.buf, "%s DONE %q %sin %ss%s\n", header, task.name, copied, secsDone, errStr)
+			status := "DONE"
+			if task.cached {
+				status = "CACHED"
+			}
+
+			fmt.Fprintf(t.buf, "%s %s %q %sin %ss%s\n", header, status, task.name, copied, secsDone, errStr)
 		}
 	}
 }
@@ -79,7 +88,7 @@ func newTraceRenderer(name string) *traceRenderer {
 	return &traceRenderer{
 		name:       name,
 		startTime:  time.Now(),
-		knownTasks: make(map[uint64]knownTask),
+		knownTasks: make(map[uint64]*knownTask),
 		buf:        bytes.NewBuffer(nil),
 	}
 }

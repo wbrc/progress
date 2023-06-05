@@ -112,6 +112,7 @@ type task struct {
 	startTime, endTime time.Time
 	current, total     uint64
 	isDone             bool
+	isCached           bool
 	hasError           bool
 	err                error
 	logs               [][]byte
@@ -141,6 +142,9 @@ func (t *task) update(te *TaskEvent) {
 			t.progress.tasksDone++
 		}
 	}
+	if te.Cached {
+		t.isCached = true
+	}
 
 	if te.HasErr {
 		t.hasError = true
@@ -154,7 +158,11 @@ func (t *task) update(te *TaskEvent) {
 }
 
 func (t *task) render(w io.Writer, width int, showError bool) int {
-	left := fmt.Sprintf("%s %s", arrow(t.depth), t.name)
+	cached := ""
+	if t.isCached {
+		cached = "CACHED "
+	}
+	left := fmt.Sprintf("%s %s%s", arrow(t.depth), cached, t.name)
 
 	if t.current > 0 {
 		current := fmt.Sprintf(" %.1f", units.Bytes(t.current))

@@ -40,6 +40,10 @@ type Task interface {
 	// leave it as 0 and only the current progress will be displayed. If f
 	// returns an error the task will be marked as failed.
 	Writer(name string, w io.Writer, total uint64, f func(WriterTask) error) error
+
+	// Cached will mark the task as cached. Cached tasks will be displayed
+	// differently when they are done.
+	Cached()
 }
 
 // ReaderTask is a Task that can be used to read from a reader and update the
@@ -68,6 +72,8 @@ type TaskEvent struct {
 
 	StartTime, EndTime time.Time // start and end time of the task, used to calculate the duration
 	IsDone             bool      // true if the task is done, finished tasks will be displayed differently
+
+	Cached bool // true if the task is cached, cached tasks will be displayed differently when they are done
 
 	// Current and Total are used to display a copy progress if Total is
 	// unknown leave it as 0 and only Current will be displayed
@@ -198,4 +204,11 @@ func (t *taskExecutor) Writer(name string, w io.Writer, total uint64, f func(Wri
 	}
 
 	return err
+}
+
+func (t *taskExecutor) Cached() {
+	t.ch <- &TaskEvent{
+		ID:     t.id,
+		Cached: true,
+	}
 }

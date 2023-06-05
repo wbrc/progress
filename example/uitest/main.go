@@ -66,6 +66,11 @@ func Work(p *progress.RootTask) (buildError error) {
 						size /= 2
 					}
 
+					if idx == 0 {
+						rt.Cached()
+						return nil
+					}
+
 					lr := rateReader(io.LimitReader(rt, int64(size)), rand.Intn(5300121)+5300121)
 					_, err := io.Copy(io.Discard, lr)
 					if err != nil {
