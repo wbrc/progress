@@ -52,13 +52,15 @@ func main() {
 func Work(p *progress.RootTask) (buildError error) {
 	defer p.Close()
 
-	err := p.Execute("fetch image", func(t *progress.Task) error {
+	fmt.Fprintf(p.Logger(), "starting build\n")
+
+	err := p.Execute("fetch image", func(t progress.Task) error {
 		errs := make(chan error)
 
 		for i := 0; i < 3; i++ {
 			go func(idx int) {
 				size := uint64(rand.Intn(10000000) + 10000000)
-				errs <- t.Reader(fmt.Sprintf("fetching %d", idx), rand.New(rand.NewSource(0)), size, func(rt *progress.ReaderTask) error {
+				errs <- t.Reader(fmt.Sprintf("fetching %d", idx), rand.New(rand.NewSource(0)), size, func(rt progress.ReaderTask) error {
 
 					if failDownload2 && idx == 1 {
 						size /= 2
@@ -99,7 +101,7 @@ func Work(p *progress.RootTask) (buildError error) {
 			return
 		}
 
-		if err := p.Execute("cleanup", func(t *progress.Task) error {
+		if err := p.Execute("cleanup", func(t progress.Task) error {
 			time.Sleep(2 * time.Second)
 			return nil
 		}); err != nil {
@@ -107,15 +109,15 @@ func Work(p *progress.RootTask) (buildError error) {
 		}
 	}()
 
-	err = p.Execute("build image", func(t *progress.Task) error {
+	err = p.Execute("build image", func(t progress.Task) error {
 		for i := 0; i < 10; i++ {
 			time.Sleep(time.Duration(rand.Intn(100))*time.Millisecond + 50*time.Millisecond)
-			fmt.Fprintf(t.Log, "some line %d\n", i)
+			fmt.Fprintf(t.Logger(), "some line %d\n", i)
 		}
 
-		err := t.Execute("build subimage", func(t *progress.Task) error {
+		err := t.Execute("build subimage", func(t progress.Task) error {
 			time.Sleep(time.Duration(rand.Intn(1000))*time.Millisecond + 500*time.Millisecond)
-			err := t.Execute("build subsubimage", func(t *progress.Task) error {
+			err := t.Execute("build subsubimage", func(t progress.Task) error {
 				time.Sleep(time.Duration(rand.Intn(1000))*time.Millisecond + 500*time.Millisecond)
 				if failWithErr {
 					return errors.New("some err")
@@ -139,7 +141,7 @@ func Work(p *progress.RootTask) (buildError error) {
 		return fmt.Errorf("failed to build image: %w", err)
 	}
 
-	err = p.Writer("push image", io.Discard, 0, func(t *progress.WriterTask) error {
+	err = p.Writer("push image", io.Discard, 0, func(t progress.WriterTask) error {
 		size := int64(rand.Intn(10000000) + 10000000)
 		rr := rateReader(io.LimitReader(rand.New(rand.NewSource(0)), size), 2e7)
 		_, err := io.Copy(t, rr)

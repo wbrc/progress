@@ -79,7 +79,7 @@ func ProcessEvents(f console.File, name, mode string, events <-chan *TaskEvent) 
 
 // RootTask is a task that can be used to close the channel of events.
 type RootTask struct {
-	TaskExecutor
+	taskExecutor
 }
 
 // Close closes the channel of events.
@@ -90,7 +90,10 @@ func (r *RootTask) Close() error {
 
 // DisplayProgress displays progress events to the console or trace. It is
 // a convenience function that creates a RootTask and returns a channel that
-// is closed when the rendering is complete.
+// is closed when the rendering is complete. The caller has to make sure to
+// close the RootTask after all Subtasks are completed. After the RootTask is
+// closed, the remaining unprocesses events are rendered and the returned
+// channel is closed.
 func DisplayProgress(f console.File, name, mode string) (*RootTask, <-chan struct{}, error) {
 	events := make(chan *TaskEvent)
 
@@ -100,8 +103,9 @@ func DisplayProgress(f console.File, name, mode string) (*RootTask, <-chan struc
 	}
 
 	r := &RootTask{
-		TaskExecutor{
-			ch: events,
+		taskExecutor{
+			ch:  events,
+			log: &taskLogger{events, 0},
 		},
 	}
 

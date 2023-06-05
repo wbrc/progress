@@ -24,6 +24,10 @@ type consoleRenderer struct {
 }
 
 func (p *consoleRenderer) update(te *TaskEvent) {
+	if te.ID == 0 {
+		return
+	}
+
 	if existingTask, ok := p.allTasks[te.ID]; ok {
 		existingTask.update(te)
 	} else {

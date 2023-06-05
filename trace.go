@@ -24,6 +24,10 @@ type traceRenderer struct {
 }
 
 func (t *traceRenderer) update(te *TaskEvent) {
+	if te.ID == 0 {
+		return
+	}
+
 	secs := fmt.Sprintf("%.1f", time.Since(t.startTime).Seconds())
 	header := fmt.Sprintf("[%5s]", secs)
 

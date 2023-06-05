@@ -5,7 +5,61 @@ import (
 	"time"
 )
 
-// TaskEvent carries all the information about tasks
+type taskLogger struct {
+	ch chan *TaskEvent
+	id uint64
+}
+
+// Write writes logs to the task.
+func (l *taskLogger) Write(p []byte) (int, error) {
+	pp := make([]byte, len(p))
+	copy(pp, p)
+	l.ch <- &TaskEvent{
+		ID:   l.id,
+		Logs: pp,
+	}
+	return len(p), nil
+}
+
+// Task is the interface that represents a task execution. It can be used to
+// execute subtasks and write logs.
+type Task interface {
+	// Logger returns a writer that can be used to write logs to the task.
+	Logger() io.Writer
+
+	// Execute executes a subtask in f. If f returns an error the task will be
+	// marked as failed.
+	Execute(name string, f func(Task) error) error
+
+	// Reader executes a subtask that reads from r in f. If total is unknown
+	// leave it as 0 and only the current progress will be displayed. If f
+	// returns an error the task will be marked as failed.
+	Reader(name string, r io.Reader, total uint64, f func(ReaderTask) error) error
+
+	// Writer executes a subtask that writes to w in f. If total is unknown
+	// leave it as 0 and only the current progress will be displayed. If f
+	// returns an error the task will be marked as failed.
+	Writer(name string, w io.Writer, total uint64, f func(WriterTask) error) error
+}
+
+// ReaderTask is a Task that can be used to read from a reader and update the
+// progress.
+type ReaderTask interface {
+	Task
+	io.Reader
+}
+
+// WriterTask is a Task that can be used to write to a writer and update the
+// progress.
+type WriterTask interface {
+	Task
+	io.Writer
+}
+
+var _ Task = &taskExecutor{}
+
+// TaskEvent carries all the information about tasks. You'll only need this if
+// you do not want to use the Task interfaces and provide the events yourself.
 type TaskEvent struct {
 	ID       uint64 // unique ID for the task, must be > 0
 	ParentID uint64 // ID of the parent task, 0 if no parent
@@ -25,15 +79,17 @@ type TaskEvent struct {
 	Logs []byte // logs of the task, will be displayed in the task body
 }
 
-// TaskExecutor is a task that can be used to execute subtasks
-type TaskExecutor struct {
-	id uint64
-	ch chan *TaskEvent
+type taskExecutor struct {
+	id  uint64
+	ch  chan *TaskEvent
+	log *taskLogger
 }
 
-// Execute executes a subtask in f. If f returns an error the task will be
-// marked as failed.
-func (t *TaskExecutor) Execute(name string, f func(*Task) error) error {
+func (t *taskExecutor) Logger() io.Writer {
+	return t.log
+}
+
+func (t *taskExecutor) Execute(name string, f func(Task) error) error {
 	newID := uint64(time.Now().UnixNano())
 	t.ch <- &TaskEvent{
 		ID:        newID,
@@ -42,7 +98,7 @@ func (t *TaskExecutor) Execute(name string, f func(*Task) error) error {
 		StartTime: time.Now(),
 	}
 
-	err := f(&Task{TaskExecutor{newID, t.ch}, &taskLogger{t.ch, newID}})
+	err := f(&taskExecutor{newID, t.ch, &taskLogger{t.ch, newID}})
 
 	t.ch <- &TaskEvent{
 		ID:      newID,
@@ -55,16 +111,14 @@ func (t *TaskExecutor) Execute(name string, f func(*Task) error) error {
 	return err
 }
 
-// ReaderTask is a task that can be used to track progress of reading from a
-// reader.
-type ReaderTask struct {
-	TaskExecutor
+type readerTask struct {
+	taskExecutor
 	read uint64
 	r    io.Reader
 }
 
 // Read reads from the underlying reader and updates the progress.
-func (t *ReaderTask) Read(p []byte) (int, error) {
+func (t *readerTask) Read(p []byte) (int, error) {
 	n, err := t.r.Read(p)
 
 	t.read += uint64(n)
@@ -76,8 +130,7 @@ func (t *ReaderTask) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// Reader executes a Reader subtask in f.
-func (t *TaskExecutor) Reader(name string, r io.Reader, total uint64, f func(*ReaderTask) error) error {
+func (t *taskExecutor) Reader(name string, r io.Reader, total uint64, f func(ReaderTask) error) error {
 	newID := uint64(time.Now().UnixNano())
 	t.ch <- &TaskEvent{
 		ID:        newID,
@@ -87,7 +140,7 @@ func (t *TaskExecutor) Reader(name string, r io.Reader, total uint64, f func(*Re
 		StartTime: time.Now(),
 	}
 
-	rt := &ReaderTask{TaskExecutor{newID, t.ch}, 0, r}
+	rt := &readerTask{taskExecutor{newID, t.ch, &taskLogger{t.ch, newID}}, 0, r}
 
 	err := f(rt)
 
@@ -102,16 +155,14 @@ func (t *TaskExecutor) Reader(name string, r io.Reader, total uint64, f func(*Re
 	return err
 }
 
-// WriterTask is a task that can be used to track progress of writing to a
-// writer.
-type WriterTask struct {
-	TaskExecutor
+type writerTask struct {
+	taskExecutor
 	written uint64
 	w       io.Writer
 }
 
 // Write writes to the underlying writer and updates the progress.
-func (t *WriterTask) Write(p []byte) (int, error) {
+func (t *writerTask) Write(p []byte) (int, error) {
 	n, err := t.w.Write(p)
 
 	t.written += uint64(n)
@@ -123,8 +174,7 @@ func (t *WriterTask) Write(p []byte) (int, error) {
 	return n, err
 }
 
-// Writer executes a Writer subtask in f.
-func (t *TaskExecutor) Writer(name string, w io.Writer, total uint64, f func(*WriterTask) error) error {
+func (t *taskExecutor) Writer(name string, w io.Writer, total uint64, f func(WriterTask) error) error {
 	newID := uint64(time.Now().UnixNano())
 	t.ch <- &TaskEvent{
 		ID:        newID,
@@ -134,7 +184,7 @@ func (t *TaskExecutor) Writer(name string, w io.Writer, total uint64, f func(*Wr
 		StartTime: time.Now(),
 	}
 
-	wt := &WriterTask{TaskExecutor{newID, t.ch}, 0, w}
+	wt := &writerTask{taskExecutor{newID, t.ch, &taskLogger{t.ch, newID}}, 0, w}
 
 	err := f(wt)
 
@@ -148,26 +198,4 @@ func (t *TaskExecutor) Writer(name string, w io.Writer, total uint64, f func(*Wr
 	}
 
 	return err
-}
-
-// Task is a task or subtask that can be used to write logs.
-type Task struct {
-	TaskExecutor
-	Log *taskLogger // Log implements io.Writer and can be used to write logs
-}
-
-type taskLogger struct {
-	ch chan *TaskEvent
-	id uint64
-}
-
-// Write writes logs to the task.
-func (l *taskLogger) Write(p []byte) (int, error) {
-	pp := make([]byte, len(p))
-	copy(pp, p)
-	l.ch <- &TaskEvent{
-		ID:   l.id,
-		Logs: pp,
-	}
-	return len(p), nil
 }
