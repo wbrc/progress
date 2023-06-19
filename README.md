@@ -5,4 +5,4 @@
 progress is task visualization library for Go inspired by
 [buildkit](https://github.com/moby/buildkit).
 
-[![asciicast](https://asciinema.org/a/e0UuqVn2mW3HHDdB144DanyMM.svg)](https://asciinema.org/a/e0UuqVn2mW3HHDdB144DanyMM)
+[![asciicast](https://asciinema.org/a/YCmMDISRg3hOwwxs2zI5oIW4J.svg)](https://asciinema.org/a/YCmMDISRg3hOwwxs2zI5oIW4J)
