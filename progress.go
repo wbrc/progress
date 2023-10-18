@@ -88,6 +88,16 @@ func (r *RootTask) Close() error {
 	return nil
 }
 
+// NewRootTask creates a new RootTask that sends events to the given channel.
+func NewRootTask(ch chan *TaskEvent) *RootTask {
+	return &RootTask{
+		taskExecutor{
+			ch:  ch,
+			log: &taskLogger{ch, 0},
+		},
+	}
+}
+
 // DisplayProgress displays progress events to the console or trace. It is
 // a convenience function that creates a RootTask and returns a channel that
 // is closed when the rendering is complete. The caller has to make sure to
