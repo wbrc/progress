@@ -39,16 +39,17 @@ func (p *consoleRenderer) update(te *TaskEvent) {
 		}
 
 		newTask := &task{
-			id:        te.ID,
-			parentID:  te.ParentID,
-			startTime: te.StartTime,
-			current:   te.Current,
-			total:     te.Total,
-			name:      te.Name,
-			depth:     depth,
-			term:      vt100.NewVT100(6, 80),
-			logTail:   newTail(32),
-			progress:  p,
+			id:          te.ID,
+			parentID:    te.ParentID,
+			startTime:   te.StartTime,
+			ioStartTime: te.IOStartTime,
+			current:     te.Current,
+			total:       te.Total,
+			name:        te.Name,
+			depth:       depth,
+			term:        vt100.NewVT100(6, 80),
+			logTail:     newTail(32),
+			progress:    p,
 		}
 
 		p.allTasks[te.ID] = newTask
@@ -110,7 +111,10 @@ type task struct {
 	name               string
 	depth              int
 	startTime, endTime time.Time
+	ioStartTime        time.Time
 	current, total     uint64
+	displayRate        bool
+	displayETA         bool
 	isDone             bool
 	isCached           bool
 	hasError           bool
@@ -124,6 +128,9 @@ type task struct {
 }
 
 func (t *task) update(te *TaskEvent) {
+	if te.IOStartTime != (time.Time{}) {
+		t.ioStartTime = te.IOStartTime
+	}
 	if te.Name != "" {
 		t.name = te.Name
 	}
@@ -133,6 +140,16 @@ func (t *task) update(te *TaskEvent) {
 	}
 	if te.Total > 0 {
 		t.total = te.Total
+	}
+	if te.EnableDisplayRate {
+		t.displayRate = true
+	} else if te.DisableDisplayRate {
+		t.displayRate = false
+	}
+	if te.EnableDisplayETA {
+		t.displayETA = true
+	} else if te.DisableDisplayETA {
+		t.displayETA = false
 	}
 	if !t.isDone && te.IsDone {
 		t.isDone = true
@@ -172,7 +189,20 @@ func (t *task) render(w io.Writer, width int, showError bool) int {
 			total = fmt.Sprintf(" / %.1f", units.Bytes(t.total))
 		}
 
-		left = fmt.Sprintf("%s%s%s", left, current, total)
+		var rate string
+		if t.total > 0 && !t.isDone && t.displayRate {
+			rate = fmt.Sprintf(" (%.1f/s)", units.Bytes(float64(t.current)/time.Since(t.ioStartTime).Seconds()))
+		}
+
+		var eta string
+		if t.total > 0 && !t.isDone && t.displayETA {
+			rate := float64(t.current) / time.Since(t.ioStartTime).Seconds()
+			secsRemain := float64(t.total-t.current) / rate
+			etaDuration := time.Duration(secsRemain) * time.Second
+			eta = fmt.Sprintf(" ETA %s", etaDuration)
+		}
+
+		left = fmt.Sprintf("%s%s%s%s%s", left, current, total, rate, eta)
 	}
 
 	right := ""

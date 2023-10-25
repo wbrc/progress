@@ -31,6 +31,7 @@ func LoadData(t progress.Task) error {
 	err := t.Copier("load image", 0, func(ct progress.CopyTask) error {
 
 		ct.DisplayRate(true)
+		ct.DisplayETA(true)
 		ct.Reset(32 * 1024 * 1024)
 		ct.Name("download image")
 
@@ -39,10 +40,10 @@ func LoadData(t progress.Task) error {
 			return fmt.Errorf("failed to download: %w", err)
 		}
 
-		ct.Reset(32 * 1024 * 1024)
+		ct.Reset(64 * 1024 * 1024)
 		ct.Name("extract image")
 
-		_, err = ct.Copy(io.Discard, rateReader(io.LimitReader(rand.Reader, 32*1024*1024), 5*1024*1024))
+		_, err = ct.Copy(io.Discard, rateReader(io.LimitReader(rand.Reader, 64*1024*1024), 5*1024*1024))
 		if err != nil {
 			return fmt.Errorf("failed to extract: %w", err)
 		}

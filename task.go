@@ -61,6 +61,7 @@ type ReaderTask interface {
 	Task
 	io.Reader
 	DisplayRate(bool)
+	DisplayETA(bool)
 }
 
 // WriterTask is a Task that can be used to write to a writer and update the
@@ -69,6 +70,7 @@ type WriterTask interface {
 	Task
 	io.Writer
 	DisplayRate(bool)
+	DisplayETA(bool)
 }
 
 // CopyTask is a Task that can be used to copy from a reader to a writer and
@@ -78,6 +80,7 @@ type CopyTask interface {
 	Copy(dest io.Writer, src io.Reader) (int64, error)
 	Reset(total uint64)
 	DisplayRate(bool)
+	DisplayETA(bool)
 }
 
 var _ Task = &taskExecutor{}
@@ -91,6 +94,7 @@ type TaskEvent struct {
 	Name string // name of the task, this will be displayed in the header line
 
 	StartTime, EndTime time.Time // start and end time of the task, used to calculate the duration
+	IOStartTime        time.Time // start time of the IO task, used to calculate the rate and ETA
 	IsDone             bool      // true if the task is done, finished tasks will be displayed differently
 
 	Cached bool // true if the task is cached, cached tasks will be displayed differently when they are done
@@ -99,7 +103,11 @@ type TaskEvent struct {
 	// unknown leave it as 0 and only Current will be displayed
 	Current, Total uint64
 
-	DisplayRate bool // true if the rate should be displayed, only used for io tasks
+	EnableDisplayRate  bool // true if displaying the rate should be enabled, only used for io tasks
+	DisableDisplayRate bool // true if displaying the rate should be disabled, only used for io tasks
+
+	EnableDisplayETA  bool // true if displaying the ETA should be enabled, only used for io tasks
+	DisableDisplayETA bool // true if displaying the ETA should be disabled, only used for io tasks
 
 	HasErr bool  // true if the task has an error
 	Err    error // error of the task, will be displayed in the task body when all tasks are done
@@ -126,11 +134,13 @@ func (t *taskExecutor) Name(name string) {
 
 func (t *taskExecutor) Execute(name string, f func(Task) error) error {
 	newID := uint64(time.Now().UnixNano())
+	now := time.Now()
 	t.ch <- &TaskEvent{
-		ID:        newID,
-		ParentID:  t.id,
-		Name:      name,
-		StartTime: time.Now(),
+		ID:          newID,
+		ParentID:    t.id,
+		Name:        name,
+		StartTime:   now,
+		IOStartTime: now,
 	}
 
 	err := f(&taskExecutor{newID, t.ch, &taskLogger{t.ch, newID}})
@@ -166,20 +176,35 @@ func (t *readerTask) Read(p []byte) (int, error) {
 }
 
 func (t *readerTask) DisplayRate(b bool) {
+	EnableDisplayRate := b
+	DisableDisplayRate := !b
 	t.ch <- &TaskEvent{
-		ID:          t.id,
-		DisplayRate: b,
+		ID:                 t.id,
+		EnableDisplayRate:  EnableDisplayRate,
+		DisableDisplayRate: DisableDisplayRate,
+	}
+}
+
+func (t *readerTask) DisplayETA(b bool) {
+	EnableDisplayETA := b
+	DisableDisplayETA := !b
+	t.ch <- &TaskEvent{
+		ID:                t.id,
+		EnableDisplayETA:  EnableDisplayETA,
+		DisableDisplayETA: DisableDisplayETA,
 	}
 }
 
 func (t *taskExecutor) Reader(name string, r io.Reader, total uint64, f func(ReaderTask) error) error {
 	newID := uint64(time.Now().UnixNano())
+	now := time.Now()
 	t.ch <- &TaskEvent{
-		ID:        newID,
-		ParentID:  t.id,
-		Name:      name,
-		Total:     total,
-		StartTime: time.Now(),
+		ID:          newID,
+		ParentID:    t.id,
+		Name:        name,
+		Total:       total,
+		StartTime:   now,
+		IOStartTime: now,
 	}
 
 	rt := &readerTask{taskExecutor{newID, t.ch, &taskLogger{t.ch, newID}}, 0, r}
@@ -217,20 +242,35 @@ func (t *writerTask) Write(p []byte) (int, error) {
 }
 
 func (t *writerTask) DisplayRate(b bool) {
+	EnableDisplayRate := b
+	DisableDisplayRate := !b
 	t.ch <- &TaskEvent{
-		ID:          t.id,
-		DisplayRate: b,
+		ID:                 t.id,
+		EnableDisplayRate:  EnableDisplayRate,
+		DisableDisplayRate: DisableDisplayRate,
+	}
+}
+
+func (t *writerTask) DisplayETA(b bool) {
+	EnableDisplayETA := b
+	DisableDisplayETA := !b
+	t.ch <- &TaskEvent{
+		ID:                t.id,
+		EnableDisplayETA:  EnableDisplayETA,
+		DisableDisplayETA: DisableDisplayETA,
 	}
 }
 
 func (t *taskExecutor) Writer(name string, w io.Writer, total uint64, f func(WriterTask) error) error {
 	newID := uint64(time.Now().UnixNano())
+	now := time.Now()
 	t.ch <- &TaskEvent{
-		ID:        newID,
-		ParentID:  t.id,
-		Name:      name,
-		Total:     total,
-		StartTime: time.Now(),
+		ID:          newID,
+		ParentID:    t.id,
+		Name:        name,
+		Total:       total,
+		StartTime:   now,
+		IOStartTime: now,
 	}
 
 	wt := &writerTask{taskExecutor{newID, t.ch, &taskLogger{t.ch, newID}}, 0, w}
@@ -271,27 +311,43 @@ func (t *copyTask) Copy(dest io.Writer, src io.Reader) (int64, error) {
 
 func (t *copyTask) Reset(total uint64) {
 	t.ch <- &TaskEvent{
-		ID:      t.id,
-		Total:   total,
-		Current: 0,
+		ID:          t.id,
+		Total:       total,
+		Current:     0,
+		IOStartTime: time.Now(),
 	}
 }
 
 func (t *copyTask) DisplayRate(b bool) {
+	EnableDisplayRate := b
+	DisableDisplayRate := !b
 	t.ch <- &TaskEvent{
-		ID:          t.id,
-		DisplayRate: b,
+		ID:                 t.id,
+		EnableDisplayRate:  EnableDisplayRate,
+		DisableDisplayRate: DisableDisplayRate,
+	}
+}
+
+func (t *copyTask) DisplayETA(b bool) {
+	EnableDisplayETA := b
+	DisableDisplayETA := !b
+	t.ch <- &TaskEvent{
+		ID:                t.id,
+		EnableDisplayETA:  EnableDisplayETA,
+		DisableDisplayETA: DisableDisplayETA,
 	}
 }
 
 func (t *taskExecutor) Copier(name string, total uint64, f func(CopyTask) error) error {
 	newID := uint64(time.Now().UnixNano())
+	now := time.Now()
 	t.ch <- &TaskEvent{
-		ID:        newID,
-		ParentID:  t.id,
-		Name:      name,
-		Total:     total,
-		StartTime: time.Now(),
+		ID:          newID,
+		ParentID:    t.id,
+		Name:        name,
+		Total:       total,
+		StartTime:   now,
+		IOStartTime: now,
 	}
 
 	ct := &copyTask{taskExecutor{newID, t.ch, &taskLogger{t.ch, newID}}, 0}
