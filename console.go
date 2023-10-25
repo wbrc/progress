@@ -191,6 +191,9 @@ func (t *task) render(w io.Writer, width int, showError bool) int {
 		titleLine = aec.Apply(titleLine, aec.RedF, aec.Bold)
 	} else if t.isDone {
 		titleLine = aec.Apply(titleLine, aec.BlueF)
+		if t.isCached {
+			titleLine = aec.Apply(titleLine, aec.Bold)
+		}
 	}
 
 	fmt.Fprintln(w, titleLine)
