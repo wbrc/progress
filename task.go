@@ -27,6 +27,9 @@ type Task interface {
 	// Logger returns a writer that can be used to write logs to the task.
 	Logger() io.Writer
 
+	// Name updates the name (title) of the task.
+	Name(name string)
+
 	// Execute executes a subtask in f. If f returns an error the task will be
 	// marked as failed.
 	Execute(name string, f func(Task) error) error
@@ -41,6 +44,12 @@ type Task interface {
 	// returns an error the task will be marked as failed.
 	Writer(name string, w io.Writer, total uint64, f func(WriterTask) error) error
 
+	// Copier executes a subtask that provides a Copy method to copy from src
+	// to dest. If total is unknown leave it as 0 and only the current progress
+	// will be displayed. If f returns an error the task will be marked as
+	// failed.
+	Copier(name string, total uint64, f func(CopyTask) error) error
+
 	// Cached will mark the task as cached. Cached tasks will be displayed
 	// differently when they are done.
 	Cached()
@@ -51,6 +60,7 @@ type Task interface {
 type ReaderTask interface {
 	Task
 	io.Reader
+	DisplayRate(bool)
 }
 
 // WriterTask is a Task that can be used to write to a writer and update the
@@ -58,6 +68,16 @@ type ReaderTask interface {
 type WriterTask interface {
 	Task
 	io.Writer
+	DisplayRate(bool)
+}
+
+// CopyTask is a Task that can be used to copy from a reader to a writer and
+// update the progress.
+type CopyTask interface {
+	Task
+	Copy(dest io.Writer, src io.Reader) (int64, error)
+	Reset(total uint64)
+	DisplayRate(bool)
 }
 
 var _ Task = &taskExecutor{}
@@ -79,6 +99,8 @@ type TaskEvent struct {
 	// unknown leave it as 0 and only Current will be displayed
 	Current, Total uint64
 
+	DisplayRate bool // true if the rate should be displayed, only used for io tasks
+
 	HasErr bool  // true if the task has an error
 	Err    error // error of the task, will be displayed in the task body when all tasks are done
 
@@ -93,6 +115,13 @@ type taskExecutor struct {
 
 func (t *taskExecutor) Logger() io.Writer {
 	return t.log
+}
+
+func (t *taskExecutor) Name(name string) {
+	t.ch <- &TaskEvent{
+		ID:   t.id,
+		Name: name,
+	}
 }
 
 func (t *taskExecutor) Execute(name string, f func(Task) error) error {
@@ -134,6 +163,13 @@ func (t *readerTask) Read(p []byte) (int, error) {
 	}
 
 	return n, err
+}
+
+func (t *readerTask) DisplayRate(b bool) {
+	t.ch <- &TaskEvent{
+		ID:          t.id,
+		DisplayRate: b,
+	}
 }
 
 func (t *taskExecutor) Reader(name string, r io.Reader, total uint64, f func(ReaderTask) error) error {
@@ -180,6 +216,13 @@ func (t *writerTask) Write(p []byte) (int, error) {
 	return n, err
 }
 
+func (t *writerTask) DisplayRate(b bool) {
+	t.ch <- &TaskEvent{
+		ID:          t.id,
+		DisplayRate: b,
+	}
+}
+
 func (t *taskExecutor) Writer(name string, w io.Writer, total uint64, f func(WriterTask) error) error {
 	newID := uint64(time.Now().UnixNano())
 	t.ch <- &TaskEvent{
@@ -206,6 +249,66 @@ func (t *taskExecutor) Writer(name string, w io.Writer, total uint64, f func(Wri
 	return err
 }
 
+type copyTask struct {
+	taskExecutor
+	written uint64
+}
+
+// Copy copies from src to dest and updates the progress.
+func (t *copyTask) Copy(dest io.Writer, src io.Reader) (int64, error) {
+	r := &countReader{
+		notify: func(i int64) {
+			t.ch <- &TaskEvent{
+				ID:      t.id,
+				Current: uint64(i),
+			}
+		},
+		r: src,
+	}
+
+	return io.Copy(dest, r)
+}
+
+func (t *copyTask) Reset(total uint64) {
+	t.ch <- &TaskEvent{
+		ID:      t.id,
+		Total:   total,
+		Current: 0,
+	}
+}
+
+func (t *copyTask) DisplayRate(b bool) {
+	t.ch <- &TaskEvent{
+		ID:          t.id,
+		DisplayRate: b,
+	}
+}
+
+func (t *taskExecutor) Copier(name string, total uint64, f func(CopyTask) error) error {
+	newID := uint64(time.Now().UnixNano())
+	t.ch <- &TaskEvent{
+		ID:        newID,
+		ParentID:  t.id,
+		Name:      name,
+		Total:     total,
+		StartTime: time.Now(),
+	}
+
+	ct := &copyTask{taskExecutor{newID, t.ch, &taskLogger{t.ch, newID}}, 0}
+
+	err := f(ct)
+
+	t.ch <- &TaskEvent{
+		ID:      newID,
+		EndTime: time.Now(),
+		Current: ct.written,
+		IsDone:  true,
+		HasErr:  err != nil,
+		Err:     err,
+	}
+
+	return err
+}
 func (t *taskExecutor) Cached() {
 	t.ch <- &TaskEvent{
 		ID:     t.id,

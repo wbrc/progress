@@ -36,3 +36,16 @@ func merge(bufs [][]byte) []byte {
 	}
 	return buf.Bytes()
 }
+
+type countReader struct {
+	notify func(int64)
+	r      io.Reader
+	n      int64
+}
+
+func (r *countReader) Read(p []byte) (int, error) {
+	n, err := r.r.Read(p)
+	r.n += int64(n)
+	r.notify(r.n)
+	return n, err
+}
