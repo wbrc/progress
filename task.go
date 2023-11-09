@@ -55,13 +55,18 @@ type Task interface {
 	Cached()
 }
 
+type IOTask interface {
+	DisplayRate(bool)
+	DisplayETA(bool)
+	DisplayBar(bool)
+}
+
 // ReaderTask is a Task that can be used to read from a reader and update the
 // progress.
 type ReaderTask interface {
 	Task
 	io.Reader
-	DisplayRate(bool)
-	DisplayETA(bool)
+	IOTask
 }
 
 // WriterTask is a Task that can be used to write to a writer and update the
@@ -69,18 +74,16 @@ type ReaderTask interface {
 type WriterTask interface {
 	Task
 	io.Writer
-	DisplayRate(bool)
-	DisplayETA(bool)
+	IOTask
 }
 
 // CopyTask is a Task that can be used to copy from a reader to a writer and
 // update the progress.
 type CopyTask interface {
 	Task
+	IOTask
 	Copy(dest io.Writer, src io.Reader) (int64, error)
 	Reset(total uint64)
-	DisplayRate(bool)
-	DisplayETA(bool)
 }
 
 var _ Task = &taskExecutor{}
@@ -105,9 +108,11 @@ type TaskEvent struct {
 
 	EnableDisplayRate  bool // true if displaying the rate should be enabled, only used for io tasks
 	DisableDisplayRate bool // true if displaying the rate should be disabled, only used for io tasks
+	EnableDisplayBar   bool // true if displaying the bar should be enabled, only used for io tasks
 
 	EnableDisplayETA  bool // true if displaying the ETA should be enabled, only used for io tasks
 	DisableDisplayETA bool // true if displaying the ETA should be disabled, only used for io tasks
+	DisableDisplayBar bool // true if displaying the bar should be disabled, only used for io tasks
 
 	HasErr bool  // true if the task has an error
 	Err    error // error of the task, will be displayed in the task body when all tasks are done
@@ -195,6 +200,16 @@ func (t *readerTask) DisplayETA(b bool) {
 	}
 }
 
+func (t *readerTask) DisplayBar(b bool) {
+	EnableDisplayBar := b
+	DisableDisplayBar := !b
+	t.ch <- &TaskEvent{
+		ID:                t.id,
+		EnableDisplayBar:  EnableDisplayBar,
+		DisableDisplayBar: DisableDisplayBar,
+	}
+}
+
 func (t *taskExecutor) Reader(name string, r io.Reader, total uint64, f func(ReaderTask) error) error {
 	newID := uint64(time.Now().UnixNano())
 	now := time.Now()
@@ -258,6 +273,16 @@ func (t *writerTask) DisplayETA(b bool) {
 		ID:                t.id,
 		EnableDisplayETA:  EnableDisplayETA,
 		DisableDisplayETA: DisableDisplayETA,
+	}
+}
+
+func (t *writerTask) DisplayBar(b bool) {
+	EnableDisplayBar := b
+	DisableDisplayBar := !b
+	t.ch <- &TaskEvent{
+		ID:                t.id,
+		EnableDisplayBar:  EnableDisplayBar,
+		DisableDisplayBar: DisableDisplayBar,
 	}
 }
 
@@ -335,6 +360,16 @@ func (t *copyTask) DisplayETA(b bool) {
 		ID:                t.id,
 		EnableDisplayETA:  EnableDisplayETA,
 		DisableDisplayETA: DisableDisplayETA,
+	}
+}
+
+func (t *copyTask) DisplayBar(b bool) {
+	EnableDisplayBar := b
+	DisableDisplayBar := !b
+	t.ch <- &TaskEvent{
+		ID:                t.id,
+		EnableDisplayBar:  EnableDisplayBar,
+		DisableDisplayBar: DisableDisplayBar,
 	}
 }
 

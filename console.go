@@ -115,6 +115,7 @@ type task struct {
 	current, total     uint64
 	displayRate        bool
 	displayETA         bool
+	displayBar         bool
 	isDone             bool
 	isCached           bool
 	hasError           bool
@@ -150,6 +151,11 @@ func (t *task) update(te *TaskEvent) {
 		t.displayETA = true
 	} else if te.DisableDisplayETA {
 		t.displayETA = false
+	}
+	if te.EnableDisplayBar {
+		t.displayBar = true
+	} else if te.DisableDisplayBar {
+		t.displayBar = false
 	}
 	if !t.isDone && te.IsDone {
 		t.isDone = true
@@ -215,6 +221,11 @@ func (t *task) render(w io.Writer, width int, showError bool) int {
 		endTime = t.endTime
 	}
 	right = fmt.Sprintf("%s %.1fs", right, endTime.Sub(t.startTime).Seconds())
+
+	if t.displayBar && t.total > 0 && !t.isDone {
+		barLen := width - utf8.RuneCountInString(left) - utf8.RuneCountInString(right) - 2
+		left = fmt.Sprintf("%s %s", left, bar(barLen, float64(t.current)/float64(t.total)))
+	}
 
 	titleLine := align(left, right, width)
 	if t.hasError {
