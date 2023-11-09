@@ -181,11 +181,12 @@ func (t *task) update(te *TaskEvent) {
 }
 
 func (t *task) render(w io.Writer, width int, showError bool) int {
+
 	cached := ""
 	if t.isCached {
 		cached = "CACHED "
 	}
-	left := fmt.Sprintf("%s %s%s", arrow(t.depth), cached, t.name)
+	left := fmt.Sprintf("%s %s%s", mkarrow(t.depth), cached, t.name)
 
 	if t.current > 0 {
 		current := fmt.Sprintf(" %.1f", units.Bytes(t.current))
@@ -224,7 +225,7 @@ func (t *task) render(w io.Writer, width int, showError bool) int {
 
 	if t.displayBar && t.total > 0 && !t.isDone {
 		barLen := width - utf8.RuneCountInString(left) - utf8.RuneCountInString(right) - 2
-		left = fmt.Sprintf("%s %s", left, bar(barLen, float64(t.current)/float64(t.total)))
+		left = fmt.Sprintf("%s %s", left, mkbar(barLen, float64(t.current)/float64(t.total)))
 	}
 
 	titleLine := align(left, right, width)

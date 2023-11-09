@@ -25,11 +25,11 @@ func align(l, r string, w int) string {
 	return fmt.Sprintf("%-[2]*[1]s %[3]s", l, w-len(r)-1, r)
 }
 
-func arrow(len int) string {
+func mkarrow(len int) string {
 	return strings.TrimSuffix(strings.Repeat("=> ", len), " ")
 }
 
-func bar(width int, percent float64) string {
+func mkbar(width int, percent float64) string {
 	if width < 3 {
 		return ""
 	}
