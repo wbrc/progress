@@ -146,8 +146,9 @@ func Work(p *progress.RootTask) (buildError error) {
 		return fmt.Errorf("failed to build image: %w", err)
 	}
 
-	err = p.Writer("push image", io.Discard, 0, func(t progress.WriterTask) error {
-		size := int64(rand.Intn(10000000) + 10000000)
+	size := int64(rand.Intn(20000000) + 20000000)
+	err = p.Writer("push image", io.Discard, uint64(size), func(t progress.WriterTask) error {
+		t.DisplayBar(true)
 		rr := rateReader(io.LimitReader(rand.New(rand.NewSource(0)), size), 2e7)
 		_, err := io.Copy(t, rr)
 		if err != nil {
