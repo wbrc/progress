@@ -181,47 +181,48 @@ func (t *task) update(te *TaskEvent) {
 }
 
 func (t *task) render(w io.Writer, width int, showError bool) int {
+	arrow := mkarrow(t.depth)
 
 	cached := ""
 	if t.isCached {
-		cached = "CACHED "
+		cached = " CACHED"
 	}
-	left := fmt.Sprintf("%s %s%s", mkarrow(t.depth), cached, t.name)
 
+	bytesCount := ""
+	rate := ""
+	eta := ""
 	if t.current > 0 {
-		current := fmt.Sprintf(" %.1f", units.Bytes(t.current))
+		bytesCount = fmt.Sprintf(" %.1f", units.Bytes(t.current))
 
-		var total string
 		if t.total > 0 && !t.isDone {
-			total = fmt.Sprintf(" / %.1f", units.Bytes(t.total))
+			bytesCount = fmt.Sprintf("%s / %.1f", bytesCount, units.Bytes(t.total))
 		}
 
-		var rate string
 		if t.total > 0 && !t.isDone && t.displayRate {
 			rate = fmt.Sprintf(" (%.1f/s)", units.Bytes(float64(t.current)/time.Since(t.ioStartTime).Seconds()))
 		}
 
-		var eta string
 		if t.total > 0 && !t.isDone && t.displayETA {
-			rate := float64(t.current) / time.Since(t.ioStartTime).Seconds()
-			secsRemain := float64(t.total-t.current) / rate
+			bps := float64(t.current) / time.Since(t.ioStartTime).Seconds()
+			secsRemain := float64(t.total-t.current) / bps
 			etaDuration := time.Duration(secsRemain) * time.Second
 			eta = fmt.Sprintf(" ETA %s", etaDuration)
 		}
-
-		left = fmt.Sprintf("%s%s%s%s%s", left, current, total, rate, eta)
 	}
 
-	right := ""
+	subtasks := ""
 	if len(t.subtasks) > 0 {
-		right = fmt.Sprintf("(%d/%d)", t.subtasksDone, len(t.subtasks))
+		subtasks = fmt.Sprintf("(%d/%d)", t.subtasksDone, len(t.subtasks))
 	}
 
 	endTime := time.Now()
 	if t.isDone {
 		endTime = t.endTime
 	}
-	right = fmt.Sprintf("%s %.1fs", right, endTime.Sub(t.startTime).Seconds())
+	stopwatch := fmt.Sprintf("%.1fs", endTime.Sub(t.startTime).Seconds())
+
+	left := fmt.Sprintf("%s%s %s%s%s%s", arrow, cached, t.name, bytesCount, rate, eta)
+	right := fmt.Sprintf("%s %s", stopwatch, subtasks)
 
 	if t.displayBar && t.total > 0 && !t.isDone {
 		barLen := width - utf8.RuneCountInString(left) - utf8.RuneCountInString(right) - 2
@@ -229,6 +230,7 @@ func (t *task) render(w io.Writer, width int, showError bool) int {
 	}
 
 	titleLine := align(left, right, width)
+
 	if t.hasError {
 		titleLine = aec.Apply(titleLine, aec.RedF, aec.Bold)
 	} else if t.isDone {
