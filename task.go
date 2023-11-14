@@ -3,90 +3,46 @@ package progress
 import (
 	"io"
 	"time"
+
+	"github.com/containerd/console"
 )
 
-type taskLogger struct {
-	ch chan *TaskEvent
-	id uint64
+// RootTask is a task that can be used to close the channel of events.
+type RootTask struct {
+	Task
 }
 
-// Write writes logs to the task.
-func (l *taskLogger) Write(p []byte) (int, error) {
-	pp := make([]byte, len(p))
-	copy(pp, p)
-	l.ch <- &TaskEvent{
-		ID:   l.id,
-		Logs: pp,
+// Close closes the channel of events.
+func (r *RootTask) Close() error {
+	close(r.ch)
+	return nil
+}
+
+// NewRootTask creates a new RootTask that sends events to the given channel.
+func NewRootTask(ch chan *TaskEvent) *RootTask {
+	return &RootTask{
+		Task{
+			ch: ch,
+		},
 	}
-	return len(p), nil
 }
 
-// Task is the interface that represents a task execution. It can be used to
-// execute subtasks and write logs.
-type Task interface {
-	// Logger returns a writer that can be used to write logs to the task.
-	Logger() io.Writer
+// DisplayProgress displays progress events to the console or trace. It is
+// a convenience function that creates a RootTask and returns a channel that
+// is closed when the rendering is complete. The caller has to make sure to
+// close the RootTask after all Subtasks are completed. After the RootTask is
+// closed, the remaining unprocesses events are rendered and the returned
+// channel is closed.
+func DisplayProgress(f console.File, name, mode string) (*RootTask, <-chan struct{}, error) {
+	events := make(chan *TaskEvent)
 
-	// Name updates the name (title) of the task.
-	Name(name string)
+	done, err := ProcessEvents(f, name, mode, events)
+	if err != nil {
+		return nil, nil, err
+	}
 
-	// Execute executes a subtask in f. If f returns an error the task will be
-	// marked as failed.
-	Execute(name string, f func(Task) error) error
-
-	// Reader executes a subtask that reads from r in f. If total is unknown
-	// leave it as 0 and only the current progress will be displayed. If f
-	// returns an error the task will be marked as failed.
-	Reader(name string, r io.Reader, total uint64, f func(ReaderTask) error) error
-
-	// Writer executes a subtask that writes to w in f. If total is unknown
-	// leave it as 0 and only the current progress will be displayed. If f
-	// returns an error the task will be marked as failed.
-	Writer(name string, w io.Writer, total uint64, f func(WriterTask) error) error
-
-	// Copier executes a subtask that provides a Copy method to copy from src
-	// to dest. If total is unknown leave it as 0 and only the current progress
-	// will be displayed. If f returns an error the task will be marked as
-	// failed.
-	Copier(name string, total uint64, f func(CopyTask) error) error
-
-	// Cached will mark the task as cached. Cached tasks will be displayed
-	// differently when they are done.
-	Cached()
+	return NewRootTask(events), done, nil
 }
-
-type IOTask interface {
-	DisplayRate(bool)
-	DisplayETA(bool)
-	DisplayBar(bool)
-}
-
-// ReaderTask is a Task that can be used to read from a reader and update the
-// progress.
-type ReaderTask interface {
-	Task
-	io.Reader
-	IOTask
-}
-
-// WriterTask is a Task that can be used to write to a writer and update the
-// progress.
-type WriterTask interface {
-	Task
-	io.Writer
-	IOTask
-}
-
-// CopyTask is a Task that can be used to copy from a reader to a writer and
-// update the progress.
-type CopyTask interface {
-	Task
-	IOTask
-	Copy(dest io.Writer, src io.Reader) (int64, error)
-	Reset(total uint64)
-}
-
-var _ Task = &taskExecutor{}
 
 // TaskEvent carries all the information about tasks. You'll only need this if
 // you do not want to use the Task interfaces and provide the events yourself.
@@ -120,24 +76,47 @@ type TaskEvent struct {
 	Logs []byte // logs of the task, will be displayed in the task body
 }
 
-type taskExecutor struct {
-	id  uint64
-	ch  chan *TaskEvent
-	log *taskLogger
+// TaskLogger implements io.Writer and writes logs to the task.
+type TaskLogger struct {
+	ch chan *TaskEvent
+	id uint64
 }
 
-func (t *taskExecutor) Logger() io.Writer {
-	return t.log
+// Write writes logs to the task.
+func (l *TaskLogger) Write(p []byte) (int, error) {
+	pp := make([]byte, len(p))
+	copy(pp, p)
+	l.ch <- &TaskEvent{
+		ID:   l.id,
+		Logs: pp,
+	}
+	return len(p), nil
 }
 
-func (t *taskExecutor) Name(name string) {
+// Task is the base type for all tasks. It provides the basic functionality
+// for tasks like logging and launching subtasks.
+type Task struct {
+	id uint64
+	ch chan *TaskEvent
+}
+
+// Logger returns a *TaskLogger that can be used to write logs to the task.
+func (t *Task) Logger() *TaskLogger {
+	return &TaskLogger{t.ch, t.id}
+}
+
+// Name sets the name of the task.
+func (t *Task) Name(name string) {
 	t.ch <- &TaskEvent{
 		ID:   t.id,
 		Name: name,
 	}
 }
 
-func (t *taskExecutor) Execute(name string, f func(Task) error) error {
+// Execute launches a new subtask by calling the given function and waits for
+// it to complete. If f returns an error, the task will be marked as failed and
+// the error will be returned.
+func (t *Task) Execute(name string, f func(*Task) error) error {
 	newID := uint64(time.Now().UnixNano())
 	now := time.Now()
 	t.ch <- &TaskEvent{
@@ -148,7 +127,7 @@ func (t *taskExecutor) Execute(name string, f func(Task) error) error {
 		IOStartTime: now,
 	}
 
-	err := f(&taskExecutor{newID, t.ch, &taskLogger{t.ch, newID}})
+	err := f(&Task{newID, t.ch})
 
 	t.ch <- &TaskEvent{
 		ID:      newID,
@@ -161,14 +140,61 @@ func (t *taskExecutor) Execute(name string, f func(Task) error) error {
 	return err
 }
 
-type readerTask struct {
-	taskExecutor
+// Cached marks the task as cached.
+func (t *Task) Cached() {
+	t.ch <- &TaskEvent{
+		ID:     t.id,
+		Cached: true,
+	}
+}
+
+// IOTask is a task that can be used to display IO progress.
+type IOTask struct {
+	Task
+}
+
+// DisplayRate enables or disables the display of the rate.
+func (t *IOTask) DisplayRate(b bool) {
+	EnableDisplayRate := b
+	DisableDisplayRate := !b
+	t.ch <- &TaskEvent{
+		ID:                 t.id,
+		EnableDisplayRate:  EnableDisplayRate,
+		DisableDisplayRate: DisableDisplayRate,
+	}
+}
+
+// DisplayETA enables or disables the display of the ETA.
+func (t *IOTask) DisplayETA(b bool) {
+	EnableDisplayETA := b
+	DisableDisplayETA := !b
+	t.ch <- &TaskEvent{
+		ID:                t.id,
+		EnableDisplayETA:  EnableDisplayETA,
+		DisableDisplayETA: DisableDisplayETA,
+	}
+}
+
+// DisplayBar enables or disables the display of a progress bar.
+func (t *IOTask) DisplayBar(b bool) {
+	EnableDisplayBar := b
+	DisableDisplayBar := !b
+	t.ch <- &TaskEvent{
+		ID:                t.id,
+		EnableDisplayBar:  EnableDisplayBar,
+		DisableDisplayBar: DisableDisplayBar,
+	}
+}
+
+// ReaderTask tracks the progress of reading from an underlying io.Reader
+type ReaderTask struct {
+	IOTask
 	read uint64
 	r    io.Reader
 }
 
 // Read reads from the underlying reader and updates the progress.
-func (t *readerTask) Read(p []byte) (int, error) {
+func (t *ReaderTask) Read(p []byte) (int, error) {
 	n, err := t.r.Read(p)
 
 	t.read += uint64(n)
@@ -180,37 +206,9 @@ func (t *readerTask) Read(p []byte) (int, error) {
 	return n, err
 }
 
-func (t *readerTask) DisplayRate(b bool) {
-	EnableDisplayRate := b
-	DisableDisplayRate := !b
-	t.ch <- &TaskEvent{
-		ID:                 t.id,
-		EnableDisplayRate:  EnableDisplayRate,
-		DisableDisplayRate: DisableDisplayRate,
-	}
-}
-
-func (t *readerTask) DisplayETA(b bool) {
-	EnableDisplayETA := b
-	DisableDisplayETA := !b
-	t.ch <- &TaskEvent{
-		ID:                t.id,
-		EnableDisplayETA:  EnableDisplayETA,
-		DisableDisplayETA: DisableDisplayETA,
-	}
-}
-
-func (t *readerTask) DisplayBar(b bool) {
-	EnableDisplayBar := b
-	DisableDisplayBar := !b
-	t.ch <- &TaskEvent{
-		ID:                t.id,
-		EnableDisplayBar:  EnableDisplayBar,
-		DisableDisplayBar: DisableDisplayBar,
-	}
-}
-
-func (t *taskExecutor) Reader(name string, r io.Reader, total uint64, f func(ReaderTask) error) error {
+// Reader launches a new subtask that reads from the given reader. If total is
+// 0, the task will not display a progress bar or ETA.
+func (t *Task) Reader(name string, r io.Reader, total uint64, f func(*ReaderTask) error) error {
 	newID := uint64(time.Now().UnixNano())
 	now := time.Now()
 	t.ch <- &TaskEvent{
@@ -222,7 +220,7 @@ func (t *taskExecutor) Reader(name string, r io.Reader, total uint64, f func(Rea
 		IOStartTime: now,
 	}
 
-	rt := &readerTask{taskExecutor{newID, t.ch, &taskLogger{t.ch, newID}}, 0, r}
+	rt := &ReaderTask{IOTask{Task{newID, t.ch}}, 0, r}
 
 	err := f(rt)
 
@@ -237,14 +235,15 @@ func (t *taskExecutor) Reader(name string, r io.Reader, total uint64, f func(Rea
 	return err
 }
 
-type writerTask struct {
-	taskExecutor
+// WriterTask tracks the progress of writing to an underlying io.Writer
+type WriterTask struct {
+	IOTask
 	written uint64
 	w       io.Writer
 }
 
 // Write writes to the underlying writer and updates the progress.
-func (t *writerTask) Write(p []byte) (int, error) {
+func (t *WriterTask) Write(p []byte) (int, error) {
 	n, err := t.w.Write(p)
 
 	t.written += uint64(n)
@@ -256,37 +255,9 @@ func (t *writerTask) Write(p []byte) (int, error) {
 	return n, err
 }
 
-func (t *writerTask) DisplayRate(b bool) {
-	EnableDisplayRate := b
-	DisableDisplayRate := !b
-	t.ch <- &TaskEvent{
-		ID:                 t.id,
-		EnableDisplayRate:  EnableDisplayRate,
-		DisableDisplayRate: DisableDisplayRate,
-	}
-}
-
-func (t *writerTask) DisplayETA(b bool) {
-	EnableDisplayETA := b
-	DisableDisplayETA := !b
-	t.ch <- &TaskEvent{
-		ID:                t.id,
-		EnableDisplayETA:  EnableDisplayETA,
-		DisableDisplayETA: DisableDisplayETA,
-	}
-}
-
-func (t *writerTask) DisplayBar(b bool) {
-	EnableDisplayBar := b
-	DisableDisplayBar := !b
-	t.ch <- &TaskEvent{
-		ID:                t.id,
-		EnableDisplayBar:  EnableDisplayBar,
-		DisableDisplayBar: DisableDisplayBar,
-	}
-}
-
-func (t *taskExecutor) Writer(name string, w io.Writer, total uint64, f func(WriterTask) error) error {
+// Writer launches a new subtask that writes to the given writer. If total is
+// 0, the task will not display a progress bar or ETA.
+func (t *Task) Writer(name string, w io.Writer, total uint64, f func(*WriterTask) error) error {
 	newID := uint64(time.Now().UnixNano())
 	now := time.Now()
 	t.ch <- &TaskEvent{
@@ -298,7 +269,7 @@ func (t *taskExecutor) Writer(name string, w io.Writer, total uint64, f func(Wri
 		IOStartTime: now,
 	}
 
-	wt := &writerTask{taskExecutor{newID, t.ch, &taskLogger{t.ch, newID}}, 0, w}
+	wt := &WriterTask{IOTask{Task{newID, t.ch}}, 0, w}
 
 	err := f(wt)
 
@@ -314,13 +285,14 @@ func (t *taskExecutor) Writer(name string, w io.Writer, total uint64, f func(Wri
 	return err
 }
 
-type copyTask struct {
-	taskExecutor
+// CopyTask tracks the progress of copying from an io.Reader to an io.Writer
+type CopyTask struct {
+	IOTask
 	written uint64
 }
 
 // Copy copies from src to dest and updates the progress.
-func (t *copyTask) Copy(dest io.Writer, src io.Reader) (int64, error) {
+func (t *CopyTask) Copy(dest io.Writer, src io.Reader) (int64, error) {
 	r := &countReader{
 		notify: func(i int64) {
 			t.ch <- &TaskEvent{
@@ -334,7 +306,9 @@ func (t *copyTask) Copy(dest io.Writer, src io.Reader) (int64, error) {
 	return io.Copy(dest, r)
 }
 
-func (t *copyTask) Reset(total uint64) {
+// Reset resets the progress of the task, this is useful if you want to reuse
+// the same task for multiple copies.
+func (t *CopyTask) Reset(total uint64) {
 	t.ch <- &TaskEvent{
 		ID:          t.id,
 		Total:       total,
@@ -343,37 +317,9 @@ func (t *copyTask) Reset(total uint64) {
 	}
 }
 
-func (t *copyTask) DisplayRate(b bool) {
-	EnableDisplayRate := b
-	DisableDisplayRate := !b
-	t.ch <- &TaskEvent{
-		ID:                 t.id,
-		EnableDisplayRate:  EnableDisplayRate,
-		DisableDisplayRate: DisableDisplayRate,
-	}
-}
-
-func (t *copyTask) DisplayETA(b bool) {
-	EnableDisplayETA := b
-	DisableDisplayETA := !b
-	t.ch <- &TaskEvent{
-		ID:                t.id,
-		EnableDisplayETA:  EnableDisplayETA,
-		DisableDisplayETA: DisableDisplayETA,
-	}
-}
-
-func (t *copyTask) DisplayBar(b bool) {
-	EnableDisplayBar := b
-	DisableDisplayBar := !b
-	t.ch <- &TaskEvent{
-		ID:                t.id,
-		EnableDisplayBar:  EnableDisplayBar,
-		DisableDisplayBar: DisableDisplayBar,
-	}
-}
-
-func (t *taskExecutor) Copier(name string, total uint64, f func(CopyTask) error) error {
+// Copier launches a new subtask that can be used to copy from an io.Reader to
+// an io.Writer. If total is 0, the task will not display a progress bar or ETA.
+func (t *Task) Copier(name string, total uint64, f func(*CopyTask) error) error {
 	newID := uint64(time.Now().UnixNano())
 	now := time.Now()
 	t.ch <- &TaskEvent{
@@ -385,7 +331,7 @@ func (t *taskExecutor) Copier(name string, total uint64, f func(CopyTask) error)
 		IOStartTime: now,
 	}
 
-	ct := &copyTask{taskExecutor{newID, t.ch, &taskLogger{t.ch, newID}}, 0}
+	ct := &CopyTask{IOTask{Task{newID, t.ch}}, 0}
 
 	err := f(ct)
 
@@ -399,10 +345,4 @@ func (t *taskExecutor) Copier(name string, total uint64, f func(CopyTask) error)
 	}
 
 	return err
-}
-func (t *taskExecutor) Cached() {
-	t.ch <- &TaskEvent{
-		ID:     t.id,
-		Cached: true,
-	}
 }

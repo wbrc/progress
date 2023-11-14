@@ -37,7 +37,7 @@ func main() {
 		return
 	}
 
-	err = rt.Execute("build image", func(t progress.Task) error {
+	err = rt.Execute("build image", func(t *progress.Task) error {
 		return chill(ctx, 10*time.Second)
 	})
 	if err != nil {
@@ -45,13 +45,13 @@ func main() {
 	}
 }
 
-func LoadData(ctx context.Context) func(t progress.Task) error {
-	return func(t progress.Task) error {
-		err := t.Copier("load image", 0, func(ct progress.CopyTask) (loadError error) {
+func LoadData(ctx context.Context) func(t *progress.Task) error {
+	return func(t *progress.Task) error {
+		err := t.Copier("load image", 0, func(ct *progress.CopyTask) (loadError error) {
 
 			subtask1 := make(chan error)
 			go func() {
-				subtask1 <- ct.Execute("some subtask", func(t progress.Task) error {
+				subtask1 <- ct.Execute("some subtask", func(t *progress.Task) error {
 					return chill(ctx, 2*time.Second)
 				})
 			}()
@@ -61,7 +61,7 @@ func LoadData(ctx context.Context) func(t progress.Task) error {
 
 			subtask2 := make(chan error)
 			go func() {
-				subtask2 <- ct.Execute("some subtask", func(t progress.Task) error {
+				subtask2 <- ct.Execute("some subtask", func(t *progress.Task) error {
 					return chill(ctx, 5*time.Second)
 				})
 			}()
